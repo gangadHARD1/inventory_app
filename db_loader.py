@@ -89,6 +89,22 @@ suppliers = [
     "VFL GROUP INDIA",
     "Welmet Technologies Pvt.Ltd"
 ]
+work_orders = [
+    "CFPPL/WO/2022-23-00012",
+    "CFPPL/WO/2025-26-00016",
+    "CFPPL/WO/2025-26-00014",
+    "CFPPL/WO/2024-25-00004",
+    "CFPPL/WO/2022-23-00007",
+    "CFPPL/WO/2025-26-00015"
+]
+customers = [
+    "COREFAB/INTERNAL",
+    "Larsen & Toubro Limited,Nabina",
+    "Vijaya Infra project Pvt Ltd.",
+    "Thyssenkrupp Industries",
+    "BGR GHATAMPUR/ 40MT",
+    "Vijaya Infra Projects Pvt 18mt"
+]
 
 for unit in units:
     with db.get_session() as s:
@@ -147,5 +163,24 @@ for suppl in suppliers:
         else:
             print(f"Skipped (exists): {suppl}")
 
+for wo in work_orders:
+    with db.get_session() as s:
+        exists = s.query(db.WorkOrder).filter_by(name=wo).first()
+        if not exists:
+            s.add(db.WorkOrder(name=wo))
+            s.commit()
+            print(f"Added: {wo}")
+        else:
+            print(f"Skipped (exists): {wo}")
+
+for cus in customers:
+    with db.get_session() as s:
+        exists = s.query(db.Customer).filter_by(name=cus).first()
+        if not exists:
+            s.add(db.Customer(name=cus))
+            s.commit()
+            print(f"Added: {cus}")
+        else:
+            print(f"Skipped (exists): {cus}")
 
 print("Done.")

@@ -1,0 +1,51 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:   # also allows manual trigger from GitHub UI
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PySide6 SQLAlchemy openpyxl pyinstaller
+
+      - name: Build EXE with PyInstaller
+        run: |
+          pyinstaller `
+            --onefile `
+            --windowed `
+            --name "InventoryManager" `
+            --icon "assets/icon.ico" `
+            --add-data "inventory_app;inventory_app" `
+            --hidden-import "inventory_app" `
+            --hidden-import "inventory_app.db" `
+            --hidden-import "inventory_app.auth" `
+            --hidden-import "inventory_app.ui" `
+            --hidden-import "inventory_app.utils" `
+            --hidden-import "sqlalchemy.dialects.sqlite" `
+            --hidden-import "PySide6.QtSvg" `
+            --hidden-import "PySide6.QtXml" `
+            --collect-all "PySide6" `
+            main.py
+        shell: powershell
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: InventoryManager-Windows
+          path: dist/InventoryManager.exe
+          retention-days: 30

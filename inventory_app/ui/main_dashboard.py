@@ -56,6 +56,13 @@ class MainDashboard(QMainWindow):
         tl = QHBoxLayout(top)
         tl.setContentsMargins(28, 0, 28, 0)
 
+        btn_export_issues = QPushButton("📊 Export Issues")
+        btn_export_issues.clicked.connect(self._export_issues)
+        btn_export_recv = QPushButton("📦 Export Receivables")
+        btn_export_recv.clicked.connect(self._export_receivables)
+        tl.addWidget(btn_export_issues)
+        tl.addWidget(btn_export_recv)
+
         app_title = QLabel("⬡  Inventory Management")
         app_title.setObjectName("title")
         tl.addWidget(app_title)
@@ -165,6 +172,17 @@ class MainDashboard(QMainWindow):
         win.setStyleSheet(DARK_THEME)
         win.show()
         self._open_windows[key] = win
+    def _export_issues(self):
+        from ..ui.dialogs.export_dialog import ExportDialog
+        dlg = ExportDialog(mode="issues", parent=self)
+        dlg.setStyleSheet(DARK_THEME)
+        dlg.exec()
+
+    def _export_receivables(self):
+        from ..ui.dialogs.export_dialog import ExportDialog
+        dlg = ExportDialog(mode="receivables", parent=self)
+        dlg.setStyleSheet(DARK_THEME)
+        dlg.exec()
 
     def _open_items(self):
         from ..ui.windows.items_window import ItemsWindow
