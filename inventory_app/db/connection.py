@@ -48,6 +48,75 @@ def init_db(config: dict = None):
     _engine = create_engine(url, **kwargs)
     _SessionLocal = sessionmaker(bind=_engine)
     Base.metadata.create_all(_engine)
+    _migrate_schema(_engine)
+
+
+def _column_exists(conn, table: str, column: str) -> bool:
+    if conn.dialect.name == "sqlite":
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        return any(r[1] == column for r in rows)
+    r = conn.execute(
+        text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = :t AND column_name = :c"
+        ),
+        {"t": table, "c": column},
+    ).first()
+    return r is not None
+
+
+def _table_exists(conn, table: str) -> bool:
+    if conn.dialect.name == "sqlite":
+        r = conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name=:t"),
+            {"t": table},
+        ).first()
+        return r is not None
+    r = conn.execute(
+        text(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = :t"
+        ),
+        {"t": table},
+    ).first()
+    return r is not None
+
+
+def _migrate_schema(engine):
+    with engine.begin() as conn:
+        if _table_exists(conn, "item_suppliers") and not _column_exists(conn, "item_suppliers", "unit_price"):
+            conn.execute(text("ALTER TABLE item_suppliers ADD COLUMN unit_price FLOAT"))
+        if not _table_exists(conn, "item_supplier_grades"):
+            Base.metadata.tables["item_supplier_grades"].create(conn)
+        if _table_exists(conn, "items") and not _column_exists(conn, "items", "non_supplier_non_graded"):
+            conn.execute(text("ALTER TABLE items ADD COLUMN non_supplier_non_graded FLOAT DEFAULT 0"))
+            _backfill_non_supplier_non_graded(conn)
+
+
+def _backfill_non_supplier_non_graded(conn):
+    """Set non_supplier_non_graded from residual for existing rows."""
+    rows = conn.execute(text("SELECT item_code, quantity_in_store FROM items")).fetchall()
+    for item_code, total in rows:
+        total = total or 0
+        g_sum = conn.execute(
+            text("SELECT COALESCE(SUM(quantity), 0) FROM item_grades WHERE item_code = :c"),
+            {"c": item_code},
+        ).scalar() or 0
+        s_sum = conn.execute(
+            text(
+                "SELECT COALESCE(SUM("
+                "  isup.quantity + COALESCE(("
+                "    SELECT SUM(isg.quantity) FROM item_supplier_grades isg "
+                "    WHERE isg.item_supplier_id = isup.id"
+                "  ), 0)"
+                "), 0) FROM item_suppliers isup WHERE isup.item_code = :c"
+            ),
+            {"c": item_code},
+        ).scalar() or 0
+        ng = max(0.0, total - g_sum - s_sum)
+        conn.execute(
+            text("UPDATE items SET non_supplier_non_graded = :ng WHERE item_code = :c"),
+            {"ng": ng, "c": item_code},
+        )
 
 
 def get_session() -> Session:

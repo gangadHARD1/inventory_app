@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDate
 from ...utils.widgets import make_label, make_separator
 from ... import db
+from ...db import stock as inv_stock
 from ...auth.auth import can as auth_can, is_superuser
 from datetime import date
 
@@ -51,9 +52,10 @@ class ItemsWindow(QWidget):
         root.addWidget(self.search)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
+        self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
-            "Item Code", "Item Name", "Unit", "Base Price", "Total Qty", "Grades", "Suppliers"
+            "Item Code", "Item Name", "Unit", "Base Price",
+            "Total Qty", "Non-graded (no supp.)", "Grades", "Suppliers"
         ])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -71,19 +73,39 @@ class ItemsWindow(QWidget):
 
     def refresh(self):
         with db.get_session() as s:
-            items = s.query(db.Item).order_by(db.Item.item_name).all()
+            from sqlalchemy.orm import joinedload
+            items = (
+                s.query(db.Item)
+                .options(
+                    joinedload(db.Item.grades),
+                    joinedload(db.Item.item_suppliers).joinedload(db.ItemSupplier.supplier),
+                    joinedload(db.Item.item_suppliers).joinedload(db.ItemSupplier.grades),
+                )
+                .order_by(db.Item.item_name)
+                .all()
+            )
             self._all_data = []
             for item in items:
                 unit_name = item.measurement_unit.name if item.measurement_unit else "—"
+                ng_qty = inv_stock.non_supplier_non_graded_qty(item)
                 grade_str = ", ".join(
                     f"{g.grade}(₹{g.unit_price:.2f}, qty:{g.quantity:.2f})" for g in item.grades
                 ) or "—"
-                sup_str = ", ".join(
-                    f"{isup.supplier.name}({isup.quantity})" for isup in item.item_suppliers
-                ) or "—"
+                sup_parts = []
+                for isup in item.item_suppliers:
+                    gs = ", ".join(
+                        f"{sg.grade}(₹{sg.unit_price:.2f},qty:{sg.quantity:.2f})"
+                        for sg in isup.grades
+                    )
+                    bp = f"₹{isup.unit_price:.2f}" if isup.unit_price is not None else "—"
+                    part = f"{isup.supplier.name}(base:{isup.quantity:.2f},{bp})"
+                    if gs:
+                        part += f" [{gs}]"
+                    sup_parts.append(part)
+                sup_str = "; ".join(sup_parts) or "—"
                 self._all_data.append((
                     item.item_code, item.item_name, unit_name,
-                    item.unit_price, item.quantity_in_store, grade_str, sup_str
+                    item.unit_price, item.quantity_in_store, ng_qty, grade_str, sup_str
                 ))
         self._display(self._all_data)
         self.status.setText(f"{len(self._all_data)} item(s)")
@@ -95,7 +117,7 @@ class ItemsWindow(QWidget):
             vals = [
                 str(row[0]), str(row[1]), str(row[2]),
                 f"₹{row[3]:.2f}" if row[3] is not None else "—",
-                str(row[4] or 0), str(row[5]), str(row[6])
+                str(row[4] or 0), str(row[5] or 0), str(row[6]), str(row[7])
             ]
             for c, val in enumerate(vals):
                 item = QTableWidgetItem(val)
@@ -212,7 +234,7 @@ class ItemsWindow(QWidget):
         col_hdr.addWidget(QLabel(""), )
         tg.addLayout(col_hdr)
 
-        grade_rows = []
+        item_grade_rows = []
         grade_scroll = QScrollArea(); grade_scroll.setWidgetResizable(True)
         grade_scroll.setFrameShape(QFrame.Shape.NoFrame)
         grade_container = QWidget()
@@ -227,13 +249,16 @@ class ItemsWindow(QWidget):
             pe = QDoubleSpinBox(); pe.setRange(0, 9999999); pe.setDecimals(2); pe.setValue(price)
             qe = QDoubleSpinBox(); qe.setRange(0, 9999999); qe.setDecimals(2); qe.setValue(qty)
             rb = QPushButton("✕"); rb.setObjectName("icon_btn"); rb.setFixedWidth(28)
-            rb.clicked.connect(lambda: (grade_rows.remove(row_w), row_w.setParent(None), row_w.deleteLater()))
+            rb.clicked.connect(lambda: (item_grade_rows.remove(row_w), row_w.setParent(None), row_w.deleteLater()))
             rl.addWidget(ge, 2); rl.addWidget(pe, 1); rl.addWidget(qe, 1); rl.addWidget(rb)
-            grade_rows.append(row_w)
+            item_grade_rows.append(row_w)
             grade_cl.addWidget(row_w)
             row_w._grade_edit = ge; row_w._price_edit = pe; row_w._qty_edit = qe
 
-        note_g = QLabel("Grade quantities + non-graded qty = total qty in store.")
+        note_g = QLabel(
+            "Item-level grades are non-supplier stock. "
+            "Non-graded qty (Core tab) is non-supplier, non-graded only."
+        )
         note_g.setObjectName("subtitle"); note_g.setWordWrap(True)
         btn_ag = QPushButton("＋  Add Grade"); btn_ag.setObjectName("primary")
         btn_ag.clicked.connect(lambda: add_grade_row())
@@ -244,53 +269,112 @@ class ItemsWindow(QWidget):
         tab_sups = QWidget()
         ts = QVBoxLayout(tab_sups)
         ts.setContentsMargins(20, 12, 20, 12); ts.setSpacing(8)
-        sup_rows = []
+        sup_blocks = []
         sup_scroll = QScrollArea(); sup_scroll.setWidgetResizable(True)
         sup_scroll.setFrameShape(QFrame.Shape.NoFrame)
         sup_container = QWidget()
         sup_cl = QVBoxLayout(sup_container)
-        sup_cl.setContentsMargins(0, 0, 0, 0); sup_cl.setSpacing(4)
+        sup_cl.setContentsMargins(0, 0, 0, 0); sup_cl.setSpacing(8)
         sup_scroll.setWidget(sup_container)
 
         with db.get_session() as s:
             all_suppliers = [(sup.id, sup.name) for sup in s.query(db.Supplier).order_by(db.Supplier.name).all()]
 
-        def add_sup_row(sup_id=None, qty=0.0):
-            row_w = QWidget()
-            rl = QHBoxLayout(row_w); rl.setContentsMargins(0, 0, 0, 0); rl.setSpacing(6)
+        def add_supplier_block(sup_id=None, base_price=0.0, base_qty=0.0, grade_rows=None):
+            grade_rows = grade_rows or []
+            block = QGroupBox("Supplier")
+            bl = QVBoxLayout(block); bl.setSpacing(6)
+
+            hdr = QHBoxLayout()
             sc = QComboBox()
             for sid, sname in all_suppliers:
                 sc.addItem(sname, sid)
             if sup_id:
                 idx = sc.findData(sup_id)
-                if idx >= 0: sc.setCurrentIndex(idx)
-            qe = QDoubleSpinBox(); qe.setRange(0, 9999999); qe.setDecimals(2); qe.setValue(qty)
-            rb = QPushButton("✕"); rb.setObjectName("icon_btn"); rb.setFixedWidth(28)
-            rb.clicked.connect(lambda: (sup_rows.remove(row_w), row_w.setParent(None), row_w.deleteLater()))
-            rl.addWidget(QLabel("Supplier:")); rl.addWidget(sc, 2)
-            rl.addWidget(QLabel("Qty:")); rl.addWidget(qe, 1); rl.addWidget(rb)
-            sup_rows.append(row_w)
-            sup_cl.addWidget(row_w)
-            row_w._sup_combo = sc; row_w._qty_edit = qe
+                if idx >= 0:
+                    sc.setCurrentIndex(idx)
+            pe = QDoubleSpinBox(); pe.setRange(0, 9999999); pe.setDecimals(2); pe.setPrefix("₹ ")
+            pe.setValue(base_price or 0.0)
+            qe = QDoubleSpinBox(); qe.setRange(0, 9999999); qe.setDecimals(2); qe.setValue(base_qty or 0.0)
+            rb = QPushButton("✕ Remove Supplier"); rb.setObjectName("danger")
+            rb.clicked.connect(lambda: (
+                sup_blocks.remove(block), block.setParent(None), block.deleteLater()
+            ))
+            hdr.addWidget(QLabel("Supplier:")); hdr.addWidget(sc, 2)
+            hdr.addWidget(QLabel("Base Price:")); hdr.addWidget(pe, 1)
+            hdr.addWidget(QLabel("Base Qty:")); hdr.addWidget(qe, 1)
+            hdr.addWidget(rb)
+            bl.addLayout(hdr)
 
-        note_s = QLabel("Supplier quantities are independent of grade quantities.")
+            g_hdr = QHBoxLayout()
+            g_hdr.addWidget(QLabel("Grade"), 2)
+            g_hdr.addWidget(QLabel("Price (₹)"), 1)
+            g_hdr.addWidget(QLabel("Qty"), 1)
+            bl.addLayout(g_hdr)
+
+            grade_container = QWidget()
+            grade_cl = QVBoxLayout(grade_container)
+            grade_cl.setContentsMargins(0, 0, 0, 0); grade_cl.setSpacing(4)
+            bl.addWidget(grade_container)
+            block._grade_rows = []
+
+            def add_sup_grade_row(grade="", price=0.0, qty=0.0):
+                row_w = QWidget()
+                rl = QHBoxLayout(row_w); rl.setContentsMargins(0, 0, 0, 0); rl.setSpacing(6)
+                ge = QLineEdit(grade); ge.setPlaceholderText("Grade name")
+                gpe = QDoubleSpinBox(); gpe.setRange(0, 9999999); gpe.setDecimals(2); gpe.setValue(price)
+                gqe = QDoubleSpinBox(); gqe.setRange(0, 9999999); gqe.setDecimals(2); gqe.setValue(qty)
+                grb = QPushButton("✕"); grb.setObjectName("icon_btn"); grb.setFixedWidth(28)
+                grb.clicked.connect(lambda: (
+                    block._grade_rows.remove(row_w), row_w.setParent(None), row_w.deleteLater()
+                ))
+                rl.addWidget(ge, 2); rl.addWidget(gpe, 1); rl.addWidget(gqe, 1); rl.addWidget(grb)
+                block._grade_rows.append(row_w)
+                grade_cl.addWidget(row_w)
+                row_w._grade_edit = ge; row_w._price_edit = gpe; row_w._qty_edit = gqe
+
+            for g, p, q in grade_rows:
+                add_sup_grade_row(g, p, q)
+
+            btn_ag_sup = QPushButton("＋  Add Grade for this Supplier")
+            btn_ag_sup.clicked.connect(lambda: add_sup_grade_row())
+            bl.addWidget(btn_ag_sup)
+
+            block._sup_combo = sc
+            block._price_edit = pe
+            block._qty_edit = qe
+            sup_blocks.append(block)
+            sup_cl.addWidget(block)
+
+        note_s = QLabel(
+            "Each supplier has base (non-graded) price/qty plus optional grade rows. "
+            "Supplier stock is separate from item-level (non-supplier) stock."
+        )
         note_s.setObjectName("subtitle"); note_s.setWordWrap(True)
         btn_as = QPushButton("＋  Add Supplier"); btn_as.setObjectName("primary")
-        btn_as.clicked.connect(lambda: add_sup_row())
+        btn_as.clicked.connect(lambda: add_supplier_block())
         ts.addWidget(note_s); ts.addWidget(btn_as); ts.addWidget(sup_scroll)
         tabs.addTab(tab_sups, "Suppliers")
 
         # ── Pre-fill if editing ───────────────────────────────────────────────
         if edit_code:
             with db.get_session() as s:
-                item = s.get(db.Item, edit_code)
+                from sqlalchemy.orm import joinedload
+                item = (
+                    s.query(db.Item)
+                    .options(
+                        joinedload(db.Item.grades),
+                        joinedload(db.Item.item_suppliers).joinedload(db.ItemSupplier.supplier),
+                        joinedload(db.Item.item_suppliers).joinedload(db.ItemSupplier.grades),
+                    )
+                    .filter_by(item_code=edit_code)
+                    .first()
+                )
                 if item:
                     w_name.setText(item.item_name)
                     w_price.setValue(item.unit_price or 0.0)
                     # Non-graded qty = total minus sum of grade qtys
-                    grade_qty_total = sum(g.quantity for g in item.grades)
-                    non_graded_qty = max(0.0, (item.quantity_in_store or 0.0) - grade_qty_total)
-                    w_qty.setValue(non_graded_qty)
+                    w_qty.setValue(inv_stock.non_supplier_non_graded_qty(item))
                     if item.measurement_unit_id:
                         idx = w_unit.findData(item.measurement_unit_id)
                         if idx >= 0: w_unit.setCurrentIndex(idx)
@@ -317,7 +401,13 @@ class ItemsWindow(QWidget):
                     for g in item.grades:
                         add_grade_row(g.grade, g.unit_price, g.quantity)
                     for isup in item.item_suppliers:
-                        add_sup_row(isup.supplier_id, isup.quantity)
+                        gr = [(sg.grade, sg.unit_price, sg.quantity) for sg in isup.grades]
+                        add_supplier_block(
+                            isup.supplier_id,
+                            isup.unit_price or 0.0,
+                            isup.quantity,
+                            gr,
+                        )
 
         # ── Bottom buttons ────────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -344,18 +434,28 @@ class ItemsWindow(QWidget):
 
             grades_data = [
                 (rw._grade_edit.text().strip(), rw._price_edit.value(), rw._qty_edit.value())
-                for rw in grade_rows if rw._grade_edit.text().strip()
+                for rw in item_grade_rows if rw._grade_edit.text().strip()
             ]
-            sups_data = [
-                (rw._sup_combo.currentData(), rw._qty_edit.value())
-                for rw in sup_rows if rw._sup_combo.currentData()
-            ]
+            sups_data = []
+            for block in sup_blocks:
+                sid = block._sup_combo.currentData()
+                if not sid:
+                    continue
+                sup_grade_rows = [
+                    (rw._grade_edit.text().strip(), rw._price_edit.value(), rw._qty_edit.value())
+                    for rw in block._grade_rows if rw._grade_edit.text().strip()
+                ]
+                sups_data.append((
+                    sid,
+                    block._price_edit.value() or None,
+                    block._qty_edit.value(),
+                    sup_grade_rows,
+                ))
 
-            # Total qty = non-graded + sum of grade qtys + sum of supplier qtys
-            non_graded_qty  = w_qty.value()
-            grade_qty_total = sum(q for _, _, q in grades_data)
-            sup_qty_total   = sum(q for _, q in sups_data)
-            total_qty       = non_graded_qty + grade_qty_total + sup_qty_total
+            non_graded_qty = w_qty.value()
+            total_qty = inv_stock.recompute_total_quantity(
+                non_graded_qty, grades_data, sups_data
+            )
 
             with db.get_session() as s:
                 if edit_code:
@@ -371,7 +471,8 @@ class ItemsWindow(QWidget):
                 item.item_name           = name
                 item.unit_price          = w_price.value() or None
                 item.measurement_unit_id = unit_id
-                item.quantity_in_store   = total_qty
+                item.quantity_in_store        = total_qty
+                item.non_supplier_non_graded  = non_graded_qty
                 item.section_type        = w_sec_type.text().strip() or None
                 item.section_code        = w_sec_code.text().strip() or None
                 item.location            = w_location.text().strip() or None
@@ -396,8 +497,22 @@ class ItemsWindow(QWidget):
                 for g, p, q in grades_data:
                     s.add(db.ItemGrade(item_code=item.item_code, grade=g, unit_price=p, quantity=q))
 
-                for sid, qty in sups_data:
-                    s.add(db.ItemSupplier(item_code=item.item_code, supplier_id=sid, quantity=qty))
+                for sid, base_price, base_qty, sup_grade_rows in sups_data:
+                    isup = db.ItemSupplier(
+                        item_code=item.item_code,
+                        supplier_id=sid,
+                        unit_price=base_price,
+                        quantity=base_qty,
+                    )
+                    s.add(isup)
+                    s.flush()
+                    for g, p, q in sup_grade_rows:
+                        s.add(db.ItemSupplierGrade(
+                            item_supplier_id=isup.id,
+                            grade=g,
+                            unit_price=p,
+                            quantity=q,
+                        ))
 
                 s.commit()
 

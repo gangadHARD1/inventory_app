@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from ...utils.widgets import make_label, make_separator, SearchableComboBox
 from ... import db
+from ...db import stock as inv_stock
 from datetime import datetime
 
 
@@ -264,17 +265,14 @@ class InspectionDialog(QDialog):
                 if remaining > 0.001:
                     fully_done = False
 
-                # Add passed quantity to inventory
                 if add_pass > 0:
                     item = s.get(db.Item, it.item_code)
                     if item:
-                        item.quantity_in_store = (item.quantity_in_store or 0) + add_pass
-                        if it.grade:
-                            grade_obj = s.query(db.ItemGrade).filter_by(
-                                item_code=it.item_code, grade=it.grade
-                            ).first()
-                            if grade_obj:
-                                grade_obj.quantity = (grade_obj.quantity or 0) + add_pass
+                        inv_stock.add_stock(
+                            s, item, add_pass,
+                            supplier_id=rec.supplier_id,
+                            grade=it.grade,
+                        )
 
             # Update status
             if any_fail: rec.has_failures = True

@@ -128,14 +128,30 @@ class ItemGrade(Base):
 
 
 class ItemSupplier(Base):
+    """Per-supplier stock for an item: base (non-graded) qty/price plus optional grades."""
     __tablename__ = "item_suppliers"
     id          = Column(Integer,     primary_key=True, autoincrement=True)
     item_code   = Column(String(100), ForeignKey("items.item_code"), nullable=False)
     supplier_id = Column(Integer,     ForeignKey("suppliers.id"),    nullable=False)
+    unit_price  = Column(Float,       nullable=True)
     quantity    = Column(Float,       default=0.0, nullable=False)
-    item        = relationship("Item",     back_populates="item_suppliers")
+    item        = relationship("Item", back_populates="item_suppliers")
     supplier    = relationship("Supplier")
+    grades      = relationship(
+        "ItemSupplierGrade", back_populates="item_supplier", cascade="all, delete-orphan"
+    )
     __table_args__ = (UniqueConstraint("item_code", "supplier_id"),)
+
+
+class ItemSupplierGrade(Base):
+    __tablename__ = "item_supplier_grades"
+    id               = Column(Integer,     primary_key=True, autoincrement=True)
+    item_supplier_id = Column(Integer,     ForeignKey("item_suppliers.id"), nullable=False)
+    grade            = Column(String(100), nullable=False)
+    unit_price       = Column(Float,       nullable=False)
+    quantity         = Column(Float,       default=0.0, nullable=False)
+    item_supplier    = relationship("ItemSupplier", back_populates="grades")
+    __table_args__ = (UniqueConstraint("item_supplier_id", "grade"),)
 
 
 class Item(Base):
@@ -144,6 +160,7 @@ class Item(Base):
     item_name           = Column(String(255), nullable=False)
     unit_price          = Column(Float,       nullable=True)
     quantity_in_store   = Column(Float,       default=0.0)
+    non_supplier_non_graded = Column(Float,   default=0.0)
     measurement_unit_id = Column(Integer,     ForeignKey("measurement_units.id"), nullable=True)
     measurement_unit    = relationship("MeasurementUnit")
     section_type        = Column(String(100), nullable=True)

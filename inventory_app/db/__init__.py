@@ -4,7 +4,7 @@ from .models import (
     Contractor, Customer, Supplier,
     WorkOrderCategory, WorkOrder,
     PurchaseOrder,
-    Item, ItemGrade, ItemSupplier,
+    Item, ItemGrade, ItemSupplier, ItemSupplierGrade,
     Employee, RolePermission,
     Issue,
     Receivable, ReceivableItem,

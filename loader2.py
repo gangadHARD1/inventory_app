@@ -247,11 +247,11 @@ df = pd.read_html(EXCEL_FILE)[0]
 df = df.iloc[:, :33]
 
 df.columns = [str(col).strip() for col in df.columns]
-i=0
+
 for _, row in df.iterrows():
     print("here",row,"here222",row.get(1),type(row))
-    i+=1
-    if i==2:
+
+    if clean_float(row.get(column_map["In Hand"])) == None:
         break
 
     item_code = clean_value(row.get(column_map["Item Code"]))
@@ -434,6 +434,7 @@ for _, row in df.iterrows():
 
                 measurement_unit=measurement_unit
             )
+            grayde.item = item
             
 
 
