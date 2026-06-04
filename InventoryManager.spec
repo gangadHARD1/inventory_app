@@ -1,43 +1,55 @@
-# InventoryManager.spec
-# Generated for PyInstaller — used by the GitHub Actions build.
-# Run locally with: pyinstaller InventoryManager.spec
+# PyInstaller spec for InventoryManager (Windows EXE).
+# CI: pyinstaller --clean --noconfirm InventoryManager.spec
+# Local: same command from repo root.
 
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
+ROOT = Path(SPECPATH).resolve()
+ICON = ROOT / "assets" / "icon.ico"
+
+# Lazy imports across inventory_app.ui.* — collect entire package tree.
+hiddenimports = collect_submodules("inventory_app")
+hiddenimports += [
+    "sqlalchemy.dialects.sqlite",
+    "sqlalchemy.sql.default_comparator",
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtWidgets",
+    "openpyxl",
+    "openpyxl.styles",
+    "openpyxl.utils",
+    "openpyxl.cell",
+    "openpyxl.workbook",
+]
+
+datas = []
+email_cfg = ROOT / "inventory_app" / "email_config.json"
+if email_cfg.is_file():
+    datas.append((str(email_cfg), "inventory_app"))
 
 a = Analysis(
-    ['main.py'],
-    pathex=[str(Path('.').resolve())],
+    ["main.py"],
+    pathex=[str(ROOT)],
     binaries=[],
-    datas=[
-        ('inventory_app', 'inventory_app'),
-    ],
-    hiddenimports=[
-        'inventory_app',
-        'inventory_app.db',
-        'inventory_app.auth',
-        'inventory_app.ui',
-        'inventory_app.utils',
-        'sqlalchemy.dialects.sqlite',
-        'sqlalchemy.dialects.postgresql',
-        'PySide6.QtSvg',
-        'PySide6.QtXml',
-        'PySide6.QtPrintSupport',
-        'openpyxl',
-        'openpyxl.styles',
-        'openpyxl.utils',
-        'passlib',
-        'passlib.handlers.sha2_crypt',
-        'email.mime.multipart',
-        'email.mime.base',
-        'email.mime.text',
-    ],
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['pytest', 'unittest', 'tkinter'],
+    excludes=[
+        "pytest",
+        "unittest",
+        "tkinter",
+        "matplotlib",
+        "numpy",
+        "pandas",
+        "scipy",
+        "PIL",
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -53,17 +65,18 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='InventoryManager',
+    name="InventoryManager",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,          # no console window
+    console=False,
     disable_windowed_traceback=False,
+    argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon='assets/icon.ico',   # uncomment if you add an icon
+    icon=str(ICON) if ICON.is_file() else None,
 )

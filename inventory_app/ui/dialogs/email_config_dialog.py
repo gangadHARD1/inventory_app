@@ -3,12 +3,25 @@ from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QLabel, QMessageBox
 )
 from PySide6.QtCore import Qt
-import json, os
+import json
+import os
+import shutil
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "email_config.json")
+from ...paths import app_data_dir, bundle_dir
+
+CONFIG_PATH = os.path.join(app_data_dir(), "email_config.json")
+
+
+def _ensure_email_config():
+    if os.path.exists(CONFIG_PATH):
+        return
+    bundled = os.path.join(bundle_dir(), "inventory_app", "email_config.json")
+    if os.path.isfile(bundled):
+        shutil.copy2(bundled, CONFIG_PATH)
 
 
 def load_email_config():
+    _ensure_email_config()
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH) as f:
             return json.load(f)

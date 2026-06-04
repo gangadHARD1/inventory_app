@@ -2,12 +2,13 @@ name: Build Windows EXE
 
 on:
   push:
-    branches: [ main, master ]
-  workflow_dispatch:   # also allows manual trigger from GitHub UI
+    branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
@@ -17,31 +18,24 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PySide6 SQLAlchemy openpyxl pyinstaller
+          pip install -r requirements-build.txt
 
       - name: Build EXE with PyInstaller
+        run: python -m PyInstaller --clean --noconfirm InventoryManager.spec
+
+      - name: Verify EXE exists
         run: |
-          pyinstaller `
-            --onefile `
-            --windowed `
-            --name "InventoryManager" `
-            --icon "assets/icon.ico" `
-            --add-data "inventory_app;inventory_app" `
-            --hidden-import "inventory_app" `
-            --hidden-import "inventory_app.db" `
-            --hidden-import "inventory_app.auth" `
-            --hidden-import "inventory_app.ui" `
-            --hidden-import "inventory_app.utils" `
-            --hidden-import "sqlalchemy.dialects.sqlite" `
-            --hidden-import "PySide6.QtSvg" `
-            --hidden-import "PySide6.QtXml" `
-            --collect-all "PySide6" `
-            main.py
-        shell: powershell
+          if (-not (Test-Path "dist\InventoryManager.exe")) {
+            Write-Error "dist\InventoryManager.exe was not created"
+            exit 1
+          }
+          Get-Item "dist\InventoryManager.exe" | Format-List Name, Length, LastWriteTime
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
@@ -49,3 +43,4 @@ jobs:
           name: InventoryManager-Windows
           path: dist/InventoryManager.exe
           retention-days: 30
+          if-no-files-found: error

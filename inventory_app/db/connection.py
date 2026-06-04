@@ -1,13 +1,13 @@
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from .models import Base
+from ..paths import app_data_dir
 import json
 import os
 
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "..", "db_config.json")
-DEFAULT_SQLITE_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "inventory.db")
-)
+_DATA_DIR = app_data_dir()
+CONFIG_FILE = os.path.join(_DATA_DIR, "db_config.json")
+DEFAULT_SQLITE_PATH = os.path.abspath(os.path.join(_DATA_DIR, "inventory.db"))
 
 
 def load_config():

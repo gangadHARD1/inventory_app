@@ -1,6 +1,11 @@
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# PyInstaller one-file: ensure project root is on path when frozen.
+if getattr(sys, "frozen", False):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(sys.executable)))
+else:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtGui import QFont
